@@ -1,0 +1,29 @@
+# mac
+.DS_Store
+
+# dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# env files — never commit secrets
+.env
+.env.local
+.env*.local
+
+# debug
+npm-debug.log*
+
+# vercel
+.vercel
+
+# typescript
+tsconfig.tsbuildinfo
+next-env.d.ts

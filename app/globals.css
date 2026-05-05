@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg:           #F7F5F1;
+  --surface:      #FFFFFF;
+  --surface-alt:  #F2EFE9;
+  --border:       #E2DDD5;
+  --border-strong:#C8C0B4;
+  --text-1:       #171412;
+  --text-2:       #6B6258;
+  --text-3:       #A09890;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+  background-color: var(--bg);
+  color: var(--text-1);
+  font-family: var(--font-inter, 'Inter'), sans-serif;
+  overflow-x: hidden;
+}
+
+/* Subtle warm paper background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(ellipse 70% 50% at 5% -5%, rgba(37, 99, 235, 0.03) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 95% 105%, rgba(124, 58, 237, 0.025) 0%, transparent 60%),
+    #F7F5F1;
+}
+
+/* Fine dot grid */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.045) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
+}
+
+/* ─── Streaming gradient border ─────────────────────────────── */
+@keyframes borderRotate {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.streaming-border {
+  background: linear-gradient(135deg, #3B82F6, #8B5CF6, #06B6D4, #3B82F6);
+  background-size: 300% 300%;
+  animation: borderRotate 3s ease infinite;
+  padding: 1.5px;
+  border-radius: 18px;
+}
+
+.done-border {
+  background: linear-gradient(135deg, #10B981, #6EE7B7);
+  padding: 1px;
+  border-radius: 18px;
+}
+
+.error-border {
+  background: linear-gradient(135deg, #EF4444, #FCA5A5);
+  padding: 1px;
+  border-radius: 18px;
+}
+
+/* ─── Blinking cursor ─────────────────────────────────────────── */
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.cursor-blink::after {
+  content: '▋';
+  color: #3B82F6;
+  animation: cursorBlink 1s step-end infinite;
+  margin-left: 1px;
+}
+
+/* ─── Shimmer ─────────────────────────────────────────────────── */
+@keyframes shimmerMove {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(0,0,0,0.025) 25%,
+    rgba(0,0,0,0.06)  50%,
+    rgba(0,0,0,0.025) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmerMove 1.5s linear infinite;
+}
+
+/* ─── Scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 4px; height: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: #C8C0B4; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #A09890; }
+
+/* ─── Card / panel base ───────────────────────────────────────── */
+.glass {
+  background: #FFFFFF;
+  border: 1px solid #E2DDD5;
+  box-shadow: 0 1px 4px rgba(23, 20, 18, 0.04), 0 1px 2px rgba(23, 20, 18, 0.02);
+}
+
+/* ─── Verdict glow (adapted for light bg) ────────────────────── */
+@keyframes approveGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.08), 0 4px 16px rgba(22, 163, 74, 0.08); }
+  50%       { box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.06), 0 4px 24px rgba(22, 163, 74, 0.18); }
+}
+@keyframes investigateGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.08), 0 4px 16px rgba(217, 119, 6, 0.08); }
+  50%       { box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.06), 0 4px 24px rgba(217, 119, 6, 0.18); }
+}
+@keyframes denyGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.08), 0 4px 16px rgba(220, 38, 38, 0.08); }
+  50%       { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.06), 0 4px 24px rgba(220, 38, 38, 0.18); }
+}
+
+.verdict-approve     { animation: approveGlow     2.5s ease-in-out infinite; }
+.verdict-investigate { animation: investigateGlow 2.5s ease-in-out infinite; }
+.verdict-deny        { animation: denyGlow        2.5s ease-in-out infinite; }
+
+/* ─── Pipeline connector ──────────────────────────────────────── */
+@keyframes connectorFill {
+  0%   { opacity: 0.2; }
+  100% { opacity: 1;   }
+}
+.connector-active { animation: connectorFill 0.6s ease-out forwards; }
+
+/* ─── Stat number counter ─────────────────────────────────────── */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+.stat-value { animation: countUp 0.5s ease-out; }
+
+/* ─── Hero title word-reveal ──────────────────────────────────── */
+@keyframes revealWord {
+  from { opacity: 0; transform: translateY(32px) skewY(2deg); }
+  to   { opacity: 1; transform: translateY(0) skewY(0deg);    }
+}
+.reveal-word {
+  display: inline-block;
+  animation: revealWord 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
