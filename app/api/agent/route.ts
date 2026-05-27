@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest } from 'next/server';
 import { buildAgentPrompt } from '@/lib/prompts';
 import { AgentRequestBody, AgentId } from '@/lib/types';
+import { traceClaude } from '@/lib/tracing';
 
 export const maxDuration = 60;
 
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder();
+      const startTime = Date.now();
       try {
         const claudeStream = client.messages.stream({
           model: 'claude-sonnet-4-6',
@@ -59,12 +61,26 @@ export async function POST(req: NextRequest) {
           messages: [{ role: 'user', content: user }],
         });
 
+        let fullResponse = '';
         claudeStream.on('text', (delta: string) => {
+          fullResponse += delta;
           controller.enqueue(encoder.encode(delta));
         });
 
-        await claudeStream.finalMessage();
+        const finalMsg = await claudeStream.finalMessage();
         controller.close();
+
+        traceClaude({
+          agentId,
+          subTask,
+          model: 'claude-sonnet-4-6',
+          system,
+          userPrompt: user,
+          response: fullResponse,
+          inputTokens: finalMsg.usage.input_tokens,
+          outputTokens: finalMsg.usage.output_tokens,
+          latencyMs: Date.now() - startTime,
+        });
       } catch (err) {
         const message =
           err instanceof Anthropic.APIError

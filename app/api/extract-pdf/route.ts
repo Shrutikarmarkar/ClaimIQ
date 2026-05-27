@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest } from 'next/server';
+import { traceClaude } from '@/lib/tracing';
 
 export const maxDuration = 30;
 
@@ -23,6 +24,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const client = new Anthropic({ apiKey });
+    const startTime = Date.now();
+    const extractPrompt = 'Extract all the text content from this document. Return only the extracted text, preserving the structure and formatting as closely as possible.';
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response = await (client.messages.create as any)({
@@ -39,10 +42,7 @@ export async function POST(req: NextRequest) {
               data: pdfBase64,
             },
           },
-          {
-            type: 'text',
-            text: 'Extract all the text content from this document. Return only the extracted text, preserving the structure and formatting as closely as possible.',
-          },
+          { type: 'text', text: extractPrompt },
         ],
       }],
     });
@@ -51,6 +51,17 @@ export async function POST(req: NextRequest) {
       .filter(b => b.type === 'text')
       .map(b => b.text ?? '')
       .join('\n');
+
+    traceClaude({
+      agentId: 0,
+      model: 'claude-haiku-4-5-20251001',
+      system: '',
+      userPrompt: extractPrompt,
+      response: text,
+      inputTokens: response.usage?.input_tokens ?? 0,
+      outputTokens: response.usage?.output_tokens ?? 0,
+      latencyMs: Date.now() - startTime,
+    });
 
     return Response.json({ text });
   } catch (err) {
