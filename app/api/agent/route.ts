@@ -6,6 +6,23 @@ import { traceClaude } from '@/lib/tracing';
 
 export const maxDuration = 60;
 
+const MAX_RETRIES = 3;
+const BASE_DELAY_MS = 1000;
+
+function sleep(ms: number) {
+  return new Promise<void>(r => setTimeout(r, ms));
+}
+
+function isRetryable(err: unknown): boolean {
+  return err instanceof Anthropic.APIError && (err.status === 529 || err.status === 500);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Anthropic.APIError
+    ? `API ${err.status}: ${err.message}`
+    : err instanceof Error ? err.message : 'Unknown error';
+}
+
 const MAX_TOKENS: Record<AgentId, number> = {
   1: 1500,
   2: 1500,
@@ -53,43 +70,63 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const encoder = new TextEncoder();
       const startTime = Date.now();
-      try {
-        const claudeStream = client.messages.stream({
-          model: 'claude-sonnet-4-6',
-          max_tokens: MAX_TOKENS[agentId as AgentId],
-          system,
-          messages: [{ role: 'user', content: user }],
-        });
+      let hasSentBytes = false;
 
-        let fullResponse = '';
-        claudeStream.on('text', (delta: string) => {
-          fullResponse += delta;
-          controller.enqueue(encoder.encode(delta));
-        });
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+          await sleep(BASE_DELAY_MS * Math.pow(2, attempt - 1));
+        }
 
-        const finalMsg = await claudeStream.finalMessage();
-        controller.close();
+        try {
+          const claudeStream = client.messages.stream({
+            model: 'claude-sonnet-4-6',
+            max_tokens: MAX_TOKENS[agentId as AgentId],
+            system,
+            messages: [{ role: 'user', content: user }],
+          });
 
-        traceClaude({
-          agentId,
-          subTask,
-          model: 'claude-sonnet-4-6',
-          system,
-          userPrompt: user,
-          response: fullResponse,
-          inputTokens: finalMsg.usage.input_tokens,
-          outputTokens: finalMsg.usage.output_tokens,
-          latencyMs: Date.now() - startTime,
-        });
-      } catch (err) {
-        const message =
-          err instanceof Anthropic.APIError
-            ? `Anthropic API error ${err.status}: ${err.message}`
-            : err instanceof Error
-              ? err.message
-              : 'Unknown streaming error';
-        controller.enqueue(encoder.encode(`\n\n[ERROR: ${message}]`));
-        controller.close();
+          let fullResponse = '';
+          claudeStream.on('text', (delta: string) => {
+            hasSentBytes = true;
+            fullResponse += delta;
+            controller.enqueue(encoder.encode(delta));
+          });
+
+          const finalMsg = await claudeStream.finalMessage();
+          controller.close();
+
+          traceClaude({
+            agentId,
+            subTask,
+            model: 'claude-sonnet-4-6',
+            system,
+            userPrompt: user,
+            response: fullResponse,
+            inputTokens: finalMsg.usage.input_tokens,
+            outputTokens: finalMsg.usage.output_tokens,
+            latencyMs: Date.now() - startTime,
+          });
+          return;
+
+        } catch (err) {
+          // If partial output was already sent we can't retry — emit inline error marker
+          if (hasSentBytes) {
+            controller.enqueue(encoder.encode(`\n\n[ERROR: ${errorMessage(err)}]`));
+            controller.close();
+            return;
+          }
+
+          // Retry on 529 (overloaded) or 500 while attempts remain
+          if (isRetryable(err) && attempt < MAX_RETRIES) continue;
+
+          // Final failure — emit structured JSON so the client can distinguish
+          // this from a partial content response and show the error card state
+          controller.enqueue(encoder.encode(
+            JSON.stringify({ __streamError: true, error: errorMessage(err), agentId }),
+          ));
+          controller.close();
+          return;
+        }
       }
     },
   });

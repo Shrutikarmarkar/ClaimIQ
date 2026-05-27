@@ -45,6 +45,16 @@ async function streamAgent(
       accumulated += decoder.decode(value, { stream: true });
       onChunk?.(accumulated);
     }
+
+    // Detect structured error sentinel emitted after all retries are exhausted
+    if (accumulated.startsWith('{"__streamError":true')) {
+      try {
+        const { error } = JSON.parse(accumulated) as { error: string };
+        console.error(`Agent ${agentId} failed: ${error}`);
+      } catch { /* malformed sentinel — treat as error regardless */ }
+      return null;
+    }
+
     return accumulated;
   } catch (err) {
     console.error(`Agent ${agentId} error:`, err);
