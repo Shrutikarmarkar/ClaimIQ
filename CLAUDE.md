@@ -11,7 +11,11 @@ npm run start    # Start production server
 npm run lint     # ESLint
 ```
 
-Requires `.env.local` with `ANTHROPIC_API_KEY` (see `.env.local.example`). No test suite exists.
+Requires `.env.local` with `ANTHROPIC_API_KEY` (see `.env.local.example`).
+
+```bash
+npm run eval     # Run verdict regression suite against all 5 golden claims (calls Claude directly, costs ~$0.10)
+```
 
 ## Architecture
 
@@ -69,6 +73,8 @@ The queue UI (`ClaimQueue.tsx`) is display-only — only one claim processes at 
 - `lib/prompts.ts` — all system prompts and user message builders
 - `lib/types.ts` — `AgentState`, `CompletedCase`, `Verdict`, `QueuedClaim`
 - `lib/tracing.ts` — LangSmith tracing; `traceClaude()` is fire-and-forget (no-op when `LANGSMITH_API_KEY` is absent)
+- `lib/evals/goldenDataset.ts` — 5 labelled eval entries (expected verdict, risk level, rationale); imports claim text from `sampleClaims.ts` to avoid duplication
+- `scripts/runEvals.ts` — eval runner: calls agents 1–3 directly via the Anthropic SDK, compares verdicts, exits non-zero on any failure
 - `lib/sampleClaims.ts` — 5 sample claims with varying risk levels for testing
 - `lib/caseHistory.ts` — localStorage persistence helpers; permanent stats (`claimiq_perm_stats`) never reset on history clear
 - `components/AgentCard.tsx` — live-streaming card with tabbed output for Agent 4
