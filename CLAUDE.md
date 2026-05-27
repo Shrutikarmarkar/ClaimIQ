@@ -14,7 +14,7 @@ npm run lint     # ESLint
 Requires `.env.local` with `ANTHROPIC_API_KEY` (see `.env.local.example`).
 
 ```bash
-npm run eval     # Run verdict regression suite against all 5 golden claims (calls Claude directly, costs ~$0.10)
+npm run eval     # Verdict regression suite — runs agents 1–3 on all 5 golden claims, costs ~$0.10
 ```
 
 ## Architecture
@@ -37,7 +37,8 @@ Agent 4 is the only one that runs parallel sub-tasks (`Promise.all`). All other 
 ### Streaming
 
 - **Server** (`app/api/agent/route.ts`): calls `client.messages.stream()` from `@anthropic-ai/sdk`, pipes `text` events into a `ReadableStream`, closes on `finalMessage()`. `maxDuration = 60` caps the Vercel function at 60 s — raising it requires a Vercel plan that supports longer timeouts.
-- **Client** (`app/page.tsx`): reads the stream via `ReadableStream.getReader()`, decodes chunks, and passes the accumulated string to an `onChunk` callback that updates React state live.
+- **Retry logic**: the route retries up to 3 times on `APIError` status 529 (overloaded) or 500, with exponential backoff starting at 1 s. A `hasSentBytes` flag guards against retrying after partial output has been sent. If all retries fail before any bytes are sent, the stream closes with a JSON sentinel `{"__streamError":true,"error":"...","agentId":N}` instead of partial text.
+- **Client** (`app/page.tsx`): reads the stream via `ReadableStream.getReader()`, decodes chunks, and passes the accumulated string to an `onChunk` callback that updates React state live. `streamAgent()` checks for the `__streamError` sentinel before returning — if present it returns `null`, which triggers the error card state on that specific agent without crashing the pipeline.
 
 The `streamAgent()` helper in `app/page.tsx` encapsulates this pattern. `runAgent(agentId)` wraps it for agents 1–3. `runAgent4()` fires both letter and memo sub-tasks simultaneously.
 
