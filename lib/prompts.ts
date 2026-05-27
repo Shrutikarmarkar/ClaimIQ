@@ -1,4 +1,5 @@
 import { AgentId, AgentRequestBody } from './types';
+import { VerdictOutputSchema } from './schemas';
 
 const AGENT_1_SYSTEM = `You are a senior insurance intake specialist and claims data analyst with 15 years of experience processing auto, property, medical, and liability claims. Your role is to extract and structure all key information from raw claim submissions with clinical precision.
 
@@ -240,18 +241,25 @@ export function buildAgentPrompt(
 }
 
 export function parseVerdictFromOutput(output: string): { verdict: 'Approve' | 'Investigate' | 'Deny'; confidence: number } {
-  const verdictMatch = output.match(/VERDICT:\s*(Approve|Investigate|Deny)/i);
+  const verdictMatch    = output.match(/VERDICT:\s*(Approve|Investigate|Deny)/i);
   const confidenceMatch = output.match(/CONFIDENCE:\s*(\d+)/i);
 
-  const rawVerdict = verdictMatch?.[1];
-  let verdict: 'Approve' | 'Investigate' | 'Deny' = 'Investigate';
-  if (rawVerdict) {
-    const lower = rawVerdict.toLowerCase();
-    if (lower === 'approve') verdict = 'Approve';
-    else if (lower === 'deny') verdict = 'Deny';
-    else verdict = 'Investigate';
-  }
+  const raw = verdictMatch?.[1]?.toLowerCase() ?? '';
+  const verdictStr =
+    raw === 'approve' ? 'Approve' :
+    raw === 'deny'    ? 'Deny'    : 'Investigate';
 
-  const confidence = confidenceMatch ? Math.min(100, Math.max(0, parseInt(confidenceMatch[1]))) : 75;
-  return { verdict, confidence };
+  const rawConfidence = confidenceMatch ? parseInt(confidenceMatch[1]) : 75;
+
+  // Validate extracted values against the Zod schema — this is the typed
+  // contract between Agent 3 and all downstream consumers.
+  const result = VerdictOutputSchema.safeParse({
+    verdict:    verdictStr,
+    confidence: Math.min(100, Math.max(0, rawConfidence)),
+  });
+
+  if (result.success) return result.data;
+
+  console.warn('[parseVerdictFromOutput] schema validation failed:', result.error.issues);
+  return { verdict: 'Investigate', confidence: 75 };
 }

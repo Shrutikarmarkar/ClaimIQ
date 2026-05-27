@@ -9,13 +9,10 @@ npm run dev      # Start development server
 npm run build    # Production build (also type-checks)
 npm run start    # Start production server
 npm run lint     # ESLint
+npm run eval     # Verdict regression suite — agents 1–3 on all 5 golden claims (~$0.01 with Haiku)
 ```
 
 Requires `.env.local` with `ANTHROPIC_API_KEY` (see `.env.local.example`).
-
-```bash
-npm run eval     # Verdict regression suite — runs agents 1–3 on all 5 golden claims, costs ~$0.10
-```
 
 ## Architecture
 
@@ -36,21 +33,29 @@ Agent 4 is the only one that runs parallel sub-tasks (`Promise.all`). All other 
 
 ### Streaming
 
-- **Server** (`app/api/agent/route.ts`): calls `client.messages.stream()` from `@anthropic-ai/sdk`, pipes `text` events into a `ReadableStream`, closes on `finalMessage()`. `maxDuration = 60` caps the Vercel function at 60 s — raising it requires a Vercel plan that supports longer timeouts.
-- **Retry logic**: the route retries up to 3 times on `APIError` status 529 (overloaded) or 500, with exponential backoff starting at 1 s. A `hasSentBytes` flag guards against retrying after partial output has been sent. If all retries fail before any bytes are sent, the stream closes with a JSON sentinel `{"__streamError":true,"error":"...","agentId":N}` instead of partial text.
-- **Client** (`app/page.tsx`): reads the stream via `ReadableStream.getReader()`, decodes chunks, and passes the accumulated string to an `onChunk` callback that updates React state live. `streamAgent()` checks for the `__streamError` sentinel before returning — if present it returns `null`, which triggers the error card state on that specific agent without crashing the pipeline.
+- **Server** (`app/api/agent/route.ts`): calls `client.messages.stream()` from `@anthropic-ai/sdk`, pipes `text` events into a `ReadableStream`, closes on `finalMessage()`. `maxDuration = 60` caps the Vercel function at 60 s.
+- **Retry logic**: retries up to 3 times on `APIError` status 529 or 500, with exponential backoff starting at 1 s. A `hasSentBytes` flag guards against retrying after partial output. On final failure before any bytes are sent, the stream closes with a JSON sentinel `{"__streamError":true,"error":"...","agentId":N}`.
+- **Client** (`app/page.tsx`): reads chunks via `ReadableStream.getReader()`. `streamAgent()` detects the `__streamError` sentinel and returns `null`, which triggers the error card state on that specific agent without crashing the pipeline.
 
-The `streamAgent()` helper in `app/page.tsx` encapsulates this pattern. `runAgent(agentId)` wraps it for agents 1–3. `runAgent4()` fires both letter and memo sub-tasks simultaneously.
+The `streamAgent()` helper encapsulates the stream-read loop. `runAgent(agentId)` wraps it for agents 1–3. `runAgent4()` fires both letter and memo sub-tasks simultaneously.
+
+### Zod Schemas (`lib/schemas.ts`)
+
+All inter-agent data contracts are defined as Zod schemas. These are the canonical source of truth for shape validation:
+
+- `AgentRequestBodySchema` — validates the `/api/agent` POST body; replaces the previous manual field checks in the route. The `body` variable is typed as `unknown` and always goes through `safeParse` before destructuring.
+- `PreviousOutputsSchema` — the `{ intake?, investigation?, decision? }` object that passes context between agents.
+- `VerdictOutputSchema` — the typed contract for Agent 3's output `{ verdict: 'Approve'|'Investigate'|'Deny', confidence: 0–100 }`. `parseVerdictFromOutput()` in `lib/prompts.ts` still uses regex to extract values from free text, but then validates the extracted shape through this schema via `safeParse` before returning. A validation failure logs a warning and returns a safe default rather than crashing.
 
 ### Prompt System (`lib/prompts.ts`)
 
 - Each agent has a dedicated system prompt and a `buildAgentNUser()` function that injects prior context.
 - `buildAgentPrompt(agentId, claimText, previousOutputs, subTask?)` is the single factory used by the API route.
-- `parseVerdictFromOutput()` uses regex to extract `VERDICT` and `CONFIDENCE` from Agent 3's raw text.
+- `parseVerdictFromOutput()` extracts `VERDICT` and `CONFIDENCE` via regex, then validates through `VerdictOutputSchema`.
 
 ### PDF Extraction (`app/api/extract-pdf/route.ts`)
 
-Accepts `{ pdfBase64: string }`, calls Claude Haiku's document API (not the streaming agent route), and returns `{ text: string }`. Used as a pre-processing step before the main pipeline. The Anthropic SDK's TypeScript types don't expose the `document` block yet — the call is cast via `as any`.
+Accepts `{ pdfBase64: string }`, calls Claude Haiku's document API (not the streaming agent route), and returns `{ text: string }`. The Anthropic SDK's TypeScript types don't expose the `document` block yet — the call is cast via `as any`.
 
 ### Data Flow
 
@@ -58,32 +63,35 @@ Accepts `{ pdfBase64: string }`, calls Claude Haiku's document API (not the stre
 User input (textarea / sample claim / uploaded file)
   → [PDF only] POST /api/extract-pdf { pdfBase64 } → Claude Haiku → { text }
   → POST /api/agent { claimText, agentId, subTask?, previousOutputs }
+  → Zod validates request body
   → Claude streams response
   → chunks accumulated in outputsRef[agentId]
   → on completion, next agent starts (or Agent 4 parallel tasks)
+  → Agent 3 output parsed + Zod-validated → verdict/confidence
   → final case saved to localStorage via lib/caseHistory.ts (max 50 entries)
 ```
 
-The queue UI (`ClaimQueue.tsx`) is display-only — only one claim processes at a time. Items are added to the queue array when a run starts and updated to `done`/`error` on completion; there is no real background queuing.
+The queue UI (`ClaimQueue.tsx`) is display-only — only one claim processes at a time.
 
 ### Key Files
 
 - `app/page.tsx` — pipeline orchestration, all agent state, streaming loop
-- `app/api/agent/route.ts` — server-side Claude call; sets per-agent `max_tokens` (1500 for 1/2/4, 1200 for 3)
+- `app/api/agent/route.ts` — server-side Claude call; Zod request validation; per-agent `max_tokens` (1500 for 1/2/4, 1200 for 3)
 - `app/api/extract-pdf/route.ts` — PDF text extraction via Claude Haiku document API
+- `lib/schemas.ts` — Zod schemas: `AgentRequestBodySchema`, `PreviousOutputsSchema`, `VerdictOutputSchema`
 - `lib/prompts.ts` — all system prompts and user message builders
 - `lib/types.ts` — `AgentState`, `CompletedCase`, `Verdict`, `QueuedClaim`
 - `lib/tracing.ts` — LangSmith tracing; `traceClaude()` is fire-and-forget (no-op when `LANGSMITH_API_KEY` is absent)
-- `lib/evals/goldenDataset.ts` — 5 labelled eval entries (expected verdict, risk level, rationale); imports claim text from `sampleClaims.ts` to avoid duplication
-- `scripts/runEvals.ts` — eval runner: calls agents 1–3 directly via the Anthropic SDK, compares verdicts, exits non-zero on any failure
+- `lib/evals/goldenDataset.ts` — 5 labelled eval entries (expected verdict, risk level, rationale)
+- `scripts/runEvals.ts` — eval runner: Haiku model, 5 s inter-agent delay, 15 s inter-claim delay, progress messages
 - `lib/sampleClaims.ts` — 5 sample claims with varying risk levels for testing
-- `lib/caseHistory.ts` — localStorage persistence helpers; permanent stats (`claimiq_perm_stats`) never reset on history clear
+- `lib/caseHistory.ts` — localStorage persistence; permanent stats (`claimiq_perm_stats`) never reset on history clear
 - `components/AgentCard.tsx` — live-streaming card with tabbed output for Agent 4
 - `components/FinalReport.tsx` — post-pipeline report with 5-tab view of all outputs
 
 ### Model
 
-Main pipeline uses `claude-sonnet-4-6`. PDF extraction uses `claude-haiku-4-5-20251001`. Both model IDs are set directly in their respective API route files.
+All Claude calls (main pipeline + eval runner) use `claude-haiku-4-5-20251001`. Model IDs are set directly in their respective files (`app/api/agent/route.ts`, `scripts/runEvals.ts`). PDF extraction also uses Haiku (`app/api/extract-pdf/route.ts`).
 
 ## Styling & Design System
 

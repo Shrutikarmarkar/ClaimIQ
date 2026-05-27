@@ -1,8 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { NextRequest } from 'next/server';
 import { buildAgentPrompt } from '@/lib/prompts';
-import { AgentRequestBody, AgentId } from '@/lib/types';
+import { AgentId } from '@/lib/types';
 import { traceClaude } from '@/lib/tracing';
+import { AgentRequestBodySchema } from '@/lib/schemas';
 
 export const maxDuration = 60;
 
@@ -31,7 +32,7 @@ const MAX_TOKENS: Record<AgentId, number> = {
 };
 
 export async function POST(req: NextRequest) {
-  let body: AgentRequestBody;
+  let body: unknown;
   try {
     body = await req.json();
   } catch {
@@ -41,14 +42,14 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const { claimText, agentId, subTask, previousOutputs } = body;
-
-  if (!claimText || !agentId || agentId < 1 || agentId > 4) {
+  const parsed = AgentRequestBodySchema.safeParse(body);
+  if (!parsed.success) {
     return new Response(
-      JSON.stringify({ error: 'Missing or invalid fields: claimText, agentId' }),
+      JSON.stringify({ error: 'Invalid request body', details: parsed.error.issues }),
       { status: 400, headers: { 'Content-Type': 'application/json' } },
     );
   }
+  const { claimText, agentId, subTask, previousOutputs } = parsed.data;
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
 
         try {
           const claudeStream = client.messages.stream({
-            model: 'claude-sonnet-4-6',
+            model: 'claude-haiku-4-5-20251001',
             max_tokens: MAX_TOKENS[agentId as AgentId],
             system,
             messages: [{ role: 'user', content: user }],
@@ -98,7 +99,7 @@ export async function POST(req: NextRequest) {
           traceClaude({
             agentId,
             subTask,
-            model: 'claude-sonnet-4-6',
+            model: 'claude-haiku-4-5-20251001',
             system,
             userPrompt: user,
             response: fullResponse,
